@@ -1,5 +1,6 @@
 #include <GL/glut.h>
 #include "cuda_runtime.h"
+#include "device_launch_parameters.h"
 #include <vector>
 #include <random>    // Pour std::shuffle et std::mt19937 // For std::shuffle and std::mt19937
 #include <algorithm> // Pour std::shuffle // For std::shuffle
@@ -14,6 +15,7 @@
 // Utilisation de vecteurs pour gérer la mémoire // Using vectors to manage memory
 std::vector<std::vector<int>> forest(N, std::vector<int>(N, 0));
 std::vector<std::vector<int>> burnTime(N, std::vector<int>(N, 0));
+bool allBurnedOut = true;  // Indicateur pour vérifier si tous les feux sont éteints // Flag to check if all fires are out
 
 int simulationDuration = 60000;  // Durée de la simulation (60 secondes) // Simulation duration (60 seconds)
 int startTime = 0;  // Temps de départ en millisecondes // Start time in milliseconds
@@ -108,6 +110,45 @@ void drawForest() {
     }
 }
 
+//defining main kernel
+__global__ __host__ void updateForestKernel(int* forest, int* burnTime, int gridDims, float spreadProbability, bool allBurnedFlag) {
+    //implementation of kernel
+    //calculate the global thread index by converting from 2D -> 1D array
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int row = idx / gridDims;
+    int col = idx % gridDims;
+    if (forest[idx] == 2) {  // Si l'arbre est en feu // If the tree is on fire
+        burnTime[idx] -= 200;  // Réduire le temps de combustion // Reduce the burning time
+
+        // Vérifier si le feu est éteint // Check if the fire is out
+        if (burnTime[idx] <= 0) {
+            forest[idx] = 3;  // Marquer l'arbre comme brûlé // Mark the tree as burned
+        }
+        else {
+            // Propagation du feu aux voisins // Propagation of fire to neighbors
+            if (row > 0 && forest[idx - gridDims] == 1 && (rand() / (float)RAND_MAX) < spreadProbability) {
+                forest[idx - gridDims] = 2;
+                burnTime[idx - gridDims] = BURN_DURATION;
+            }
+            if (row < gridDims - 1 && forest[idx] == 1 && (rand() / (float)RAND_MAX) < spreadProbability) {
+                forest[idx + gridDims] = 2;
+                burnTime[idx + gridDims] = BURN_DURATION;
+            }
+            if (col > 0 && forest[idx - 1] == 1 && (rand() / (float)RAND_MAX) < spreadProbability) {
+                forest[idx - 1] = 2;
+                burnTime[idx - 1] = BURN_DURATION;
+            }
+            if (col < gridDims - 1 && forest[idx] == 1 && (rand() / (float)RAND_MAX) < spreadProbability) {
+                forest[idx + 1] = 2;
+                burnTime[idx + 1] = BURN_DURATION;
+            }
+        }
+        if (forest [idx] == 2) {
+            allBurnedOut = false;
+        }
+    }
+}
+
 // Fonction pour mettre à jour la forêt et la propagation du feu // Function to update the forest and fire propagation
 void updateForest() {
     if (isPaused) {  // Si la simulation est en pause, réinitialiser la forêt après la pause // If the simulation is paused, reset the forest after the pause
@@ -122,49 +163,42 @@ void updateForest() {
 
     //create pointer initial pointer to vector.
     int* dev_forest;
-    //allocate memory space on device to hold the forest.
-    cudaMalloc((void**)&dev_forest, N * sizeof(std::vector<int>));
+    int* dev_burn_time;
 
-    bool allBurnedOut = true;  // Indicateur pour vérifier si tous les feux sont éteints // Flag to check if all fires are out
-
+    std::vector<int> flatForest;
+    std::vector<int> flatBurnTime;
     for (int i = 0; i < N; i++) {
-        for (int j = 0; j < N; j++) {
-            if (forest[i][j] == 2) {  // Si l'arbre est en feu // If the tree is on fire
-                burnTime[i][j] -= 200;  // Réduire le temps de combustion // Reduce the burning time
-
-                // Vérifier si le feu est éteint // Check if the fire is out
-                if (burnTime[i][j] <= 0) {
-                    newForest[i][j] = 3;  // Marquer l'arbre comme brûlé // Mark the tree as burned
-                }
-                else {
-                    // Propagation du feu aux voisins // Propagation of fire to neighbors
-                    if (i > 0 && forest[i - 1][j] == 1 && (rand() / (float)RAND_MAX) < spreadProbability) {
-                        newForest[i - 1][j] = 2;
-                        burnTime[i - 1][j] = BURN_DURATION;
-                    }
-                    if (i < N - 1 && forest[i + 1][j] == 1 && (rand() / (float)RAND_MAX) < spreadProbability) {
-                        newForest[i + 1][j] = 2;
-                        burnTime[i + 1][j] = BURN_DURATION;
-                    }
-                    if (j > 0 && forest[i][j - 1] == 1 && (rand() / (float)RAND_MAX) < spreadProbability) {
-                        newForest[i][j - 1] = 2;
-                        burnTime[i][j - 1] = BURN_DURATION;
-                    }
-                    if (j < N - 1 && forest[i][j + 1] == 1 && (rand() / (float)RAND_MAX) < spreadProbability) {
-                        newForest[i][j + 1] = 2;
-                        burnTime[i][j + 1] = BURN_DURATION;
-                    }
-                }
-            }
-
-            // Si un arbre brûle encore, continuer la simulation // If a tree is still burning, continue the simulation
-            if (forest[i][j] == 2) {
-                allBurnedOut = false;
-            }
-        }
+        flatForest.insert(flatForest.end(), forest[i].begin(), forest[i].end());
+        flatBurnTime.insert(flatBurnTime.end(), burnTime[i].begin(), burnTime[i].end());
     }
 
-    forest = newForest;  // Mettre à jour la forêt avec la nouvelle copie // Update the forest with the new copy
+
+    //allocate memory space on device to hold forest.
+    cudaMalloc((void**)&dev_forest, N * N * sizeof(int));
+    //allocate memory space on device to hold burn time grid.
+    cudaMalloc((void**)&dev_burn_time, N * N * sizeof(int));
+
+    //copy the new flat grids to the device memory
+    cudaMemcpy(dev_forest, flatForest.data(), N * N * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_burn_time, flatBurnTime.data(), N * N * sizeof(int), cudaMemcpyHostToDevice);
+
+
+
+    //define parameters for further optimization/testing. 
+    const int numBlocks = 256; //good for warping? 
+    const int numThreads = (N * N) / numBlocks; // 3907?/block
+
+    //call kernel from host code
+   
+    updateForestKernel <<< numBlocks, numThreads >>> (dev_forest, dev_burn_time, N, spreadProbability);
+        
+    cudaMemcpy(flatForest.data(), dev_forest, N * N * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(flatBurnTime.data(), dev_forest, N * N * sizeof(int), cudaMemcpyDeviceToHost);
+
+    for (int i = 0; i < N; i++) {
+        std::copy(flatForest.begin() + i * N, flatForest.begin() + (i + 1) * N, forest[i].begin());
+        std::copy(flatBurnTime.begin() + i * N, flatBurnTime.begin() + (i + 1) * N, burnTime[i].begin());
+    }
 
     if (allBurnedOut) {  // Si tous les feux sont éteints, mettre la simulation en pause // If all fires are out, pause the simulation
         isPaused = true;
