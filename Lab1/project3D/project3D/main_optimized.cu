@@ -111,15 +111,16 @@ void drawForest() {
     }
 }
 
-__global__ void updateForestKernel(int* forest, int* burnTime, float* spreadProbability, bool* allBurnedFlag) {
-    int gridDims = N;
+__global__ void updateForestKernel(int* forest, int* burnTime, float* spreadProbability, bool* allBurnedFlag, int gridSize) {
+    int gridDims = gridSize;
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int row = idx / gridDims;
     int col = idx % gridDims;
 
     // Initialize cuRAND state for this thread
     curandState state;
-    curand_init(1234, idx, 0, &state);
+    /* curand_init(1234, idx, 0, &state);*/
+    curand_init((unsigned long long)clock() + idx, 0, 0, &state);
 
     // Check if the tree at this index is on fire
     if (forest[idx] == 2) {  // If the tree is on fire
@@ -131,8 +132,8 @@ __global__ void updateForestKernel(int* forest, int* burnTime, float* spreadProb
         else {
             // Spread fire to top neighbor
             if (row > 0 && forest[(row - 1) * gridDims + col] == 1) {
-                float randVal = curand_uniform(&state);
-                if (randVal < *spreadProbability) {
+                int randVal = curand(&state);
+                if ((randVal / float(RAND_MAX)) < *spreadProbability) {
                     forest[(row - 1) * gridDims + col] = 2;
                     burnTime[(row - 1) * gridDims + col] = BURN_DURATION;
                 }
@@ -140,8 +141,8 @@ __global__ void updateForestKernel(int* forest, int* burnTime, float* spreadProb
 
             // Spread fire to bottom neighbor
             if (row < gridDims - 1 && forest[(row + 1) * gridDims + col] == 1) {
-                float randVal = curand_uniform(&state);
-                if (randVal < *spreadProbability) {
+                int randVal = curand(&state);
+                if ((randVal / float(RAND_MAX)) < *spreadProbability) {
                     forest[(row + 1) * gridDims + col] = 2;
                     burnTime[(row + 1) * gridDims + col] = BURN_DURATION;
                 }
@@ -149,8 +150,8 @@ __global__ void updateForestKernel(int* forest, int* burnTime, float* spreadProb
 
             // Spread fire to left neighbor
             if (col > 0 && forest[row * gridDims + (col - 1)] == 1) {
-                float randVal = curand_uniform(&state);
-                if (randVal < *spreadProbability) {
+                int randVal = curand(&state);
+                if ((randVal / float(RAND_MAX)) < *spreadProbability) {
                     forest[row * gridDims + (col - 1)] = 2;
                     burnTime[row * gridDims + (col - 1)] = BURN_DURATION;
                 }
@@ -158,14 +159,13 @@ __global__ void updateForestKernel(int* forest, int* burnTime, float* spreadProb
 
             // Spread fire to right neighbor
             if (col < gridDims - 1 && forest[row * gridDims + (col + 1)] == 1) {
-                float randVal = curand_uniform(&state);
-                if (randVal < *spreadProbability) {
+                int randVal = curand(&state);
+                if ((randVal / float(RAND_MAX)) < *spreadProbability) {
                     forest[row * gridDims + (col + 1)] = 2;
                     burnTime[row * gridDims + (col + 1)] = BURN_DURATION;
                 }
             }
         }
-
         // If any tree is still burning, the flag should be set to false
         if (forest[idx] == 2) {
             *allBurnedFlag = false;
@@ -199,16 +199,15 @@ void updateForest() {
         std::copy(forest[i].begin(), forest[i].end(), flatForest.begin() + i * N);
         std::copy(burnTime[i].begin(), burnTime[i].end(), flatBurnTime.begin() + i * N);
     }
-
-
     //allocate memory space on device to hold forest.
     cudaMalloc((void**)&dev_forest, N * N * sizeof(int));
     //allocate memory space on device to hold burn time grid.
     cudaMalloc((void**)&dev_burn_time, N * N * sizeof(int));
     //allocate memory space on device to hold the bool
-    cudaMalloc((void**)&dev_allBurnedOut, sizeof(bool));
+    cudaMalloc((void**)&dev_allBurnedOut, sizeof(int));
     //smth  
     cudaMalloc((void**)&dev_SpreadProb, sizeof(float));
+
 
     //copy the new flat grids to the device memory
     cudaMemcpy(dev_forest, flatForest.data(), N * N * sizeof(int), cudaMemcpyHostToDevice);
@@ -217,16 +216,20 @@ void updateForest() {
     cudaMemcpy(dev_SpreadProb, &spreadProbability, sizeof(float), cudaMemcpyHostToDevice);
 
     //define parameters for further optimization/testing. 
-    const int numBlocks = 256; //good for warping? 
-    const int numThreads = (N * N) / numBlocks; // 3907?/block
+    int totalThreads = N * N;
+    int threadsPerBlock = 512;  // This is a common maximum for many GPUs
+    int numBlocks = (totalThreads + threadsPerBlock - 1) / threadsPerBlock;
+
+    bool allBurnedOut = true;
 
     //call kernel from host code
-    updateForestKernel << < numBlocks, numThreads >> > (dev_forest, dev_burn_time, dev_SpreadProb, dev_allBurnedOut);
+    updateForestKernel << < numBlocks, threadsPerBlock >> > (dev_forest, dev_burn_time, dev_SpreadProb, dev_allBurnedOut, N);
 
     cudaDeviceSynchronize();
     cudaMemcpy(flatForest.data(), dev_forest, N * N * sizeof(int), cudaMemcpyDeviceToHost);
     cudaMemcpy(flatBurnTime.data(), dev_burn_time, N * N * sizeof(int), cudaMemcpyDeviceToHost);
     cudaMemcpy(&allBurnedOut, dev_allBurnedOut, sizeof(bool), cudaMemcpyDeviceToHost);
+
 
     cudaFree(dev_forest);
     cudaFree(dev_burn_time);
@@ -241,7 +244,6 @@ void updateForest() {
         isPaused = true;
         pauseStartTime = glutGet(GLUT_ELAPSED_TIME);
     }
-    glutPostRedisplay();
 }
 
 // Fonction d'affichage // Display function
@@ -257,7 +259,7 @@ void display() {
 // Fonction pour animer la simulation // Function to animate the simulation
 void update(int value) {
     updateForest();  // Mettre à jour la forêt à chaque cycle // Update the forest at each cycle
-    //glutPostRedisplay();  // Demander un nouveau rendu // Request a new rendering
+    glutPostRedisplay();  // Demander un nouveau rendu // Request a new rendering
     glutTimerFunc(200, update, 0);  // Programmer la prochaine mise à jour dans 200 ms // Schedule the next update in 200 ms
 }
 
