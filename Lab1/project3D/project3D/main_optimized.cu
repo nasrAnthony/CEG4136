@@ -119,7 +119,6 @@ __global__ void updateForestKernel(int* forest, int* burnTime, float* spreadProb
 
     // Initialize cuRAND state for this thread
     curandState state;
-    /* curand_init(1234, idx, 0, &state);*/
     curand_init((unsigned long long)clock() + idx, 0, 0, &state);
 
     // Check if the tree at this index is on fire
