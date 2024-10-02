@@ -117,11 +117,11 @@ __global__ void updateForestKernel(int* forest, int* burnTime, float* spreadProb
     int row = idx / gridDims;
     int col = idx % gridDims;
 
-    // Initialize cuRAND state for this thread
+    //Initialize cuRAND state for this thread
     curandState state;
     curand_init((unsigned long long)clock() + idx, 0, 0, &state);
 
-    // Check if the tree at this index is on fire
+    //Check if the tree at this index is on fire
     if (forest[idx] == 2) {  // If the tree is on fire
         burnTime[idx] -= 200;  // Reduce burning time
 
@@ -129,7 +129,7 @@ __global__ void updateForestKernel(int* forest, int* burnTime, float* spreadProb
             forest[idx] = 3;  // Tree has burned out
         }
         else {
-            // Spread fire to top neighbor
+            //Spread fire to top neighbor
             if (row > 0 && forest[(row - 1) * gridDims + col] == 1) {
                 int randVal = curand(&state);
                 if ((randVal / float(RAND_MAX)) < *spreadProbability) {
@@ -138,7 +138,7 @@ __global__ void updateForestKernel(int* forest, int* burnTime, float* spreadProb
                 }
             }
 
-            // Spread fire to bottom neighbor
+            //Spread fire to bottom neighbor
             if (row < gridDims - 1 && forest[(row + 1) * gridDims + col] == 1) {
                 int randVal = curand(&state);
                 if ((randVal / float(RAND_MAX)) < *spreadProbability) {
@@ -147,7 +147,7 @@ __global__ void updateForestKernel(int* forest, int* burnTime, float* spreadProb
                 }
             }
 
-            // Spread fire to left neighbor
+            //Spread fire to left neighbor
             if (col > 0 && forest[row * gridDims + (col - 1)] == 1) {
                 int randVal = curand(&state);
                 if ((randVal / float(RAND_MAX)) < *spreadProbability) {
@@ -156,7 +156,7 @@ __global__ void updateForestKernel(int* forest, int* burnTime, float* spreadProb
                 }
             }
 
-            // Spread fire to right neighbor
+            //Spread fire to right neighbor
             if (col < gridDims - 1 && forest[row * gridDims + (col + 1)] == 1) {
                 int randVal = curand(&state);
                 if ((randVal / float(RAND_MAX)) < *spreadProbability) {
@@ -165,7 +165,7 @@ __global__ void updateForestKernel(int* forest, int* burnTime, float* spreadProb
                 }
             }
         }
-        // If any tree is still burning, the flag should be set to false
+        //If any tree is still burning, the flag should be set to false
         if (forest[idx] == 2) {
             *allBurnedFlag = false;
         }
@@ -216,7 +216,7 @@ void updateForest() {
 
     //define parameters for further optimization/testing. 
     int totalThreads = N * N;
-    int threadsPerBlock = 512;  // This is a common maximum for many GPUs
+    int threadsPerBlock = 512; //chosing 512 threads per block
     int numBlocks = (totalThreads + threadsPerBlock - 1) / threadsPerBlock;
 
     bool allBurnedOut = true;
