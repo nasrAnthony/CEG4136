@@ -36,18 +36,28 @@ __global__ void interleavedPairsSum(T* i_arr_global, T* o_arr_global, int size)
 	}
 }
 
-
-void generateArray(int* arr, int size) {
+// Generate a generic array.
+template <typename T>
+void generateArray(T* arr, int size) {
     srand(time(NULL));
 
     for (int i = 0; i < size; i++) {
-        arr[i] = rand() % 11; // 0 to 10 inclusive.
+
+		if constexpr (std::is_integral<T>::value) {
+			arr[i] = rand() % 11; // 0 to 10 inclusive.
+		} 
+		
+		else if constexpr (std::is_floating_point<T>::value) {
+			arr[i] = static_cast<T>(rand()) / static_cast<T>(RAND_MAX) * static_cast<T>(10); // 0.0 to 10.0 inclusive
+ 		}
+
     }
 
 }
 
-void checkArray(int* arr, int size) {
-	int sum = 0;
+template <typename T>
+void checkArray(T* arr, int size) {
+	T sum = 0;
 	for (int i = 0; i < size; i++) {
 		sum += arr[i];
 	}
