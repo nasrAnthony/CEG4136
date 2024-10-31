@@ -6,27 +6,34 @@
 #include <math.h>
 #include <stdlib.h>
 
+__global__ void neighboredPairsSum(int* i_arr_global, int* o_arr_global, int size) {
 
-__global__ void interleavedPairsSum(int* g_idata, int* g_odata, int n)
-{
-    int tid = threadIdx.x;
+	// set thread ID
+	int tid = threadIdx.x;
 
-    int idx = blockDim.x * blockIdx.x + tid; 
+	//convert global data pointer to the local pointer of this block
+	int* i_arr = blockDim.x * blockIdx.x + i_arr_global;
 
-	int *idata = g_idata + blockIdx.x * blockDim.x;
+	// boundary check 
+	if (tid >= size) {
+		return;
+	}
 
-	// boundary check
-	if(idx >= n) return;
-	
 	// in-place reduction in global memory
-	for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
-		if (tid < stride) {
-		idata[tid] += idata[tid + stride];
+	for (int offset = 1; offset < blockDim.x; offset *= 2) {
+
+		if ((tid % (2 * offset)) == 0) { 
+			i_arr[tid] += i_arr[tid + offset];
 		}
+
 		__syncthreads();
 	}
-	// write result for this block to global mem
-	if (tid == 0) g_odata[blockIdx.x] = idata[0];
+
+	// write result for this block into global memory
+	if (tid == 0) {
+		o_arr_global[blockIdx.x] = i_arr[0];
+	}
+
 }
 
 
@@ -45,71 +52,58 @@ void checkArray(int* arr, int size) {
 		sum += arr[i];
 	}
 
-	printf("Sum: %d\n", sum);
+	printf("Sum from Host: %d\n", sum);
 }
 
 int main()
 {
-    const int size = 512; // Max number for compatiblity.
+	int size = 512; // best compatibility for every gpu as we are configuring 1 block with 512 threads where each thread represents an element of the array.
 
-	int blocksize = 512;
+	int grid = 1;
+	int block = size;
 
-	dim3 block (blocksize,1);
-	dim3 grid ((size+block.x-1)/block.x,1);
+	// allocate host memory
+	int* hostInputArray = (int *) malloc(size * sizeof(int));
+	int* hostOutputArray = (int *) malloc(sizeof(int));
 
-	size_t bytes = size * sizeof(int);
-	int *h_idata = (int *) malloc(bytes);
-	int *h_odata = (int *) malloc(grid.x*sizeof(int));
-	int *tmp = (int *) malloc(bytes);
+	generateArray(hostInputArray, size);
 
-    //int hostArray[size]; //{1, 2, 3, 4, 5, 6, 7, 8, 9,10, 11, 12, 13, 14, 15, 16};
+	// Allocate device memory
+	int* deviceInputArray = NULL;
+	int* deviceOutputArray = NULL;
 
-    //generateArray(h_idata, arraySize);
+	cudaMalloc((void **) &deviceInputArray, size * sizeof(int));
+	cudaMalloc((void **) &deviceOutputArray, sizeof(int));
 
-	for (int i = 0; i < size; i++) {
-		// mask off high 2 bytes to force max number to 255
-		h_idata[i] = (int)(rand() & 0xFF);
-	}
-	memcpy (tmp, h_idata, bytes);
-
-	// Allocate Device Memory
-	int *d_idata = NULL;
-	int *d_odata = NULL;
-	cudaMalloc((void **) &d_idata, bytes);
-	cudaMalloc((void **) &d_odata, grid.x*sizeof(int));
-
-	cudaMemcpy(d_idata, h_idata, bytes, cudaMemcpyHostToDevice);
+	// Copy host memory to device memory
+	cudaMemcpy(deviceInputArray, hostInputArray, size * sizeof(int), cudaMemcpyHostToDevice);
 
 	cudaDeviceSynchronize();
 
-    //int block = arraySize;
-    //int grid = 1;
+	// Launch Kernel
+	neighboredPairsSum<<<grid, block>>>(deviceInputArray, deviceOutputArray, size);
 
-    interleavedPairsSum<<<grid, block>>>(d_idata, d_odata, size);
-    
-    cudaDeviceSynchronize();
+	cudaDeviceSynchronize();
 
-    // Copy the result back to host
-	int sum = 0;
-	cudaMemcpy(h_odata, d_odata, grid.x*sizeof(int), cudaMemcpyDeviceToHost);
+	// Copy Device memory to Host memory
+	cudaMemcpy(hostOutputArray, deviceOutputArray, sizeof(int), cudaMemcpyDeviceToHost);
+	
+	cudaDeviceSynchronize();
 
-	for (int i = 0; i < grid.x; i++) sum += h_odata[i];
+	// Get and print sum of array elements.
+	int sum = hostOutputArray[0];
 
-    // Output the generated array and the sum
-    // printf("Generated Array: ");
-    //for (int i = 0; i < arraySize; ++i) {
-    //    printf("%d ", hostArray[i]);
-   // }
-    printf("\nSum of array elements: %d\n", sum);
-	checkArray(h_idata, size);
+	printf("Sum from Device: %d\n", sum);
 
-    // Free device memory
-    /// free host memory
-	free(h_idata);
-	free(h_odata);
-	// free device memory
-	cudaFree(d_idata);
-	cudaFree(d_odata);
+	checkArray(hostInputArray, size);
+
+	// Free host memory
+	free(hostInputArray);
+	free(hostOutputArray);
+
+	// Free device memory
+	cudaFree(deviceInputArray);
+	cudaFree(deviceOutputArray);
 
     return 0;
 }
