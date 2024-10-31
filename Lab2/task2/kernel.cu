@@ -5,18 +5,19 @@
 #include <math.h>
 #include <stdlib.h>
 
-
+// Reduce warp divergence by using interleaved pairs instead of neighboring pairs. 
 __global__ void interleavedPairsSum(int* i_arr_global, int* o_arr_global, int size)
 {
     int tid = threadIdx.x;
 
-    int idx = blockDim.x * blockIdx.x + tid; 
+	// Note the "* 2" for loop unrolling
+    int idx = blockDim.x * blockIdx.x * 2 + tid; 
 
-	int *i_data = i_arr_global + blockIdx.x * blockDim.x;
+	int *i_data = blockIdx.x * blockDim.x * 2 + i_arr_global;
 
-	// boundary check
-	if(idx >= size) {
-		return;
+	// unrolling 2 data blocks
+	if(idx + blockDim.x < size) {
+		i_arr_global[idx] += i_arr_global[idx + blockDim.x];
 	}
 	
 	// in-place reduction in global memory
