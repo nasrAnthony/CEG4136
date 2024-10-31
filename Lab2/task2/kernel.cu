@@ -6,14 +6,16 @@
 #include <stdlib.h>
 
 // Reduce warp divergence by using interleaved pairs instead of neighboring pairs. 
-__global__ void interleavedPairsSum(int* i_arr_global, int* o_arr_global, int size)
+// Make interleaved pairs a template kernel.
+template <typename T>
+__global__ void interleavedPairsSum(T* i_arr_global, T* o_arr_global, int size)
 {
     int tid = threadIdx.x;
 
 	// Note the "* 2" for loop unrolling
     int idx = blockDim.x * blockIdx.x * 2 + tid; 
 
-	int *i_data = blockIdx.x * blockDim.x * 2 + i_arr_global;
+	T* i_data = blockIdx.x * blockDim.x * 2 + i_arr_global;
 
 	// unrolling 2 data blocks
 	if(idx + blockDim.x < size) {
