@@ -7,28 +7,51 @@
 
 // Reduce warp divergence by using interleaved pairs instead of neighboring pairs. 
 // Make interleaved pairs a template kernel.
-template <typename T>
+template <typename T, int blockSize>
 __global__ void interleavedPairsSum(T* i_arr_global, T* o_arr_global, int size)
 {
     int tid = threadIdx.x;
 
-	// Note the "* 2" for loop unrolling
-    int idx = blockDim.x * blockIdx.x * 2 + tid; 
+    int idx = blockDim.x * blockIdx.x + tid; 
 
-	T* i_data = blockIdx.x * blockDim.x * 2 + i_arr_global;
+	volatile T* i_data = blockIdx.x * blockDim.x + i_arr_global;
 
-	// unrolling 2 data blocks
-	if(idx + blockDim.x < size) {
-		i_arr_global[idx] += i_arr_global[idx + blockDim.x];
+	if(idx >= size) {
+		return;
 	}
 	
-	// in-place reduction in global memory
-	for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
-		if (tid < stride) {
-			i_data[tid] += i_data[tid + stride];
+	// Completely unroll reduction loop.
+	if (blockSize >= 512) {
+		if (tid < 256) {
+			i_data[tid] += i_data[tid + 256];
 		}
 		__syncthreads();
 	}
+
+	if (blockSize >= 256) {
+		if (tid < 128) {
+			i_data[tid] += i_data[tid + 128];
+		}
+		__syncthreads();
+	}
+
+	if (blockSize >= 128) {
+		if (tid < 64) {
+			i_data[tid] += i_data[tid + 64];
+		}
+		__syncthreads();
+	}
+
+	// Unroll the last 6 iterations which is the last warp. This means we don't need __syncthreads(). 
+	if (tid < 32) {
+		if (blockSize >= 64) i_data[tid] += i_data[tid + 32];
+		if (blockSize >= 32) i_data[tid] += i_data[tid + 16];
+		if (blockSize >= 16) i_data[tid] += i_data[tid + 8];
+		if (blockSize >= 8) i_data[tid] += i_data[tid + 4];
+		if (blockSize >= 4) i_data[tid] += i_data[tid + 2];
+		if (blockSize >= 2) i_data[tid] += i_data[tid + 1];	
+	}
+
 
 	// write result for this block to global mem
 	if (tid == 0) {
@@ -67,7 +90,10 @@ void checkArray(T* arr, int size) {
 
 int main()
 {
-    const int size = 512; // Max number for compatiblity.
+	// For block sizes (and therefore array sizes) we are assuming powers of 2. 
+	// A common maximum of threads per block is 512, so we are assuming that 512 is the maximum array size. 
+	// Therefore, the applicable sizes are powers of 2 up to 512 inclusive. {1, 2, 4, 8, etc.}
+    const int size = 512; 
 
 	int grid = 1;
 	int block = size;
@@ -88,7 +114,40 @@ int main()
 
 	cudaDeviceSynchronize();
 
-    interleavedPairsSum<<<grid, block>>>(deviceInputArray, deviceOutputArray, size);
+	switch (block) {
+		case 512:
+    		interleavedPairsSum<int, 512><<<grid, block>>>(deviceInputArray, deviceOutputArray, size);
+			break;
+		case 256:
+    		interleavedPairsSum<int, 256><<<grid, block>>>(deviceInputArray, deviceOutputArray, size);
+			break;
+		case 128: 
+    		interleavedPairsSum<int, 128><<<grid, block>>>(deviceInputArray, deviceOutputArray, size);
+			break;
+		case 64:
+    		interleavedPairsSum<int, 64><<<grid, block>>>(deviceInputArray, deviceOutputArray, size);
+			break;
+		case 32: 
+    		interleavedPairsSum<int, 32><<<grid, block>>>(deviceInputArray, deviceOutputArray, size);
+			break;
+		case 16:
+    		interleavedPairsSum<int, 16><<<grid, block>>>(deviceInputArray, deviceOutputArray, size);
+			break;
+		case 8:
+    		interleavedPairsSum<int, 8><<<grid, block>>>(deviceInputArray, deviceOutputArray, size);
+			break;
+		case 4:
+    		interleavedPairsSum<int, 4><<<grid, block>>>(deviceInputArray, deviceOutputArray, size);
+			break;
+		case 2:
+    		interleavedPairsSum<int, 2><<<grid, block>>>(deviceInputArray, deviceOutputArray, size);
+			break;
+		case 1:
+    		interleavedPairsSum<int, 1><<<grid, block>>>(deviceInputArray, deviceOutputArray, size);
+			break;
+	}
+
+
     
     cudaDeviceSynchronize();
 
