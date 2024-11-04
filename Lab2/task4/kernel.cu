@@ -5,41 +5,27 @@
 #include <math.h>
 #include <stdlib.h>
 
-__global__ void neighboredPairsNested(int *i_arr_global, int *o_arr_global, unsigned int size) {
-    // set thread ID
-    unsigned int tid = threadIdx.x;
-
+__global__ void neighboredPairsNestedOptimized(int *i_arr_global, int *o_arr_global, int offset, int const dim)
+{
     // convert global data pointer to the local pointer of this block
-    int *idata = i_arr_global + blockIdx.x*blockDim.x;
-    int *odata = &o_arr_global[blockIdx.x];
+    int *idata = i_arr_global + blockIdx.x * dim;
 
     // stop condition
-    if (size == 2 && tid == 0) {
-        o_arr_global[blockIdx.x] = idata[0]+idata[1];
+    if (offset == 1 && threadIdx.x == 0)
+    {
+        o_arr_global[blockIdx.x] = idata[0] + idata[1];
         return;
     }
 
-    // nested invocation
-    int offset = size >> 1;
-
-    if(offset > 1 && tid < offset) {
-        // in place reduction
-        idata[tid] += idata[tid + offset];
-    }
-
-    // sync at block level
-    __syncthreads();
+    // in place reduction
+    idata[threadIdx.x] += idata[threadIdx.x + offset];
 
     // nested invocation to generate child grids
-    if(tid==0) {
-        neighboredPairsNested<<<1, offset>>>(idata,odata,offset);
-
-        // sync all child grids launched in this block
-        cudaDeviceSynchronize();
+    if(threadIdx.x == 0 && blockIdx.x == 0)
+    {
+        neighboredPairsNestedOptimized<<<gridDim.x, offset / 2>>>(i_arr_global, o_arr_global,
+                offset / 2, dim);
     }
-
-    // sync at block level again
-    __syncthreads();
 }
 
 void generateArray(int* arr, int size) {
@@ -89,7 +75,7 @@ int main()
 	cudaDeviceSynchronize();
 
 	// Launch Kernel
-	neighboredPairsNested<<<grid, block>>>(deviceInputArray, deviceOutputArray, block.x);
+	neighboredPairsNestedOptimized<<<grid, block.x / 2>>>(deviceInputArray, deviceOutputArray, block.x / 2, block.x);
 
 	cudaDeviceSynchronize();
 
@@ -99,6 +85,7 @@ int main()
 	cudaDeviceSynchronize();
 
 	// Get and print sum of array elements.
+
 	int sum = 0;
 
     for (int i = 0; i < grid.x; i++){ 
