@@ -66,11 +66,11 @@ void generateArray(T* arr, int size) {
 
     for (int i = 0; i < size; i++) {
 
-		if constexpr (std::is_integral<T>::value) {
+		if (std::is_integral<T>::value) {
 			arr[i] = rand() % 11; // 0 to 10 inclusive.
 		} 
 		
-		else if constexpr (std::is_floating_point<T>::value) {
+		else if (std::is_floating_point<T>::value) {
 			arr[i] = static_cast<T>(rand()) / static_cast<T>(RAND_MAX) * static_cast<T>(10); // 0.0 to 10.0 inclusive
  		}
 
