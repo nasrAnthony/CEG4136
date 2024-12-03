@@ -7,8 +7,8 @@
 
 using namespace std;
 
-#define BDIMX 16 
-#define BDIMY 16 
+#define BDIMX 32 
+#define BDIMY 32 
 
 void buildMatrix(float* start, int& sizeX, int& sizeY) { //helper function to init the matrices before multiplication. 
     for (int i = 0; i < sizeY; i++) {
@@ -27,18 +27,10 @@ void printMatrix(float* matrix, int& sizeX, int& sizeY) { //helper function to s
     }
 }
 
-/*
-    1. A warp performs a coalesced read of a row from a block of the original matrix stored in global memory
-    2. The warp writes the data into shared memory using row-major ordering. No bank conflicts for the write.
-    3. After all read/write operations in thread block are synched, you have a 2D shared memory array filled with data from global memory.
-    4. The warp reads a column from the 2D shared memory array. Padding added to avoid bank conflicts.
-    5. Warp performs coalesced write of data into a row of the transposed matrix stored in global memory.
-*/
-
 __global__ void matrixTranspose(float* out, float* in, int nx, int ny) {
 
     // static shared memory. 
-    __shared__ float tile[BDIMY][BDIMX + 1];
+    __shared__ float tile[BDIMY][BDIMX + 1]; // Added padding
 
     // coordinate in original matrix
     unsigned int ix, iy, ti, to;
@@ -49,7 +41,7 @@ __global__ void matrixTranspose(float* out, float* in, int nx, int ny) {
     for (int i = 0; i < BDIMY; i += 4) {
         int iyUnroll = iy + i;
 
-        if (ix < nx && iyUnroll < ny) {
+        if (ix < nx && (threadIdx.y + i) < BDIMY && iyUnroll < ny) {
             // load data from global memory to shared memory. Writing in row-major order.
             tile[threadIdx.y + i][threadIdx.x] = in[(iyUnroll * nx) + ix];
         }
@@ -79,7 +71,7 @@ __global__ void matrixTranspose(float* out, float* in, int nx, int ny) {
     for (int i = 0; i < BDIMY; i += 4) {
         int ixUnroll = ix + i;
 
-        if (iy < nx && ixUnroll < ny) {
+        if (iy < nx && (irow + i) < BDIMY && ixUnroll < ny) {
             // store data to global memory from shared memory. Reading in column-major order.
             out[to + (i * ny)] = tile[icol][irow + i];
         }
@@ -89,8 +81,8 @@ __global__ void matrixTranspose(float* out, float* in, int nx, int ny) {
 
 int main()
 {
-    int x = 1024;
-    int y = 1024;
+    int x = 2048;
+    int y = 2048;
 
 
     int matrixSize = x * y;
@@ -106,7 +98,7 @@ int main()
 
     // Print matrix before transpose
     //cout << "Matrix before transpose:" << endl;
-    //printMatrix(host_matrix, x, y);
+    // printMatrix(host_matrix, x, y);
 
     // Allocate device memory
     float* dev_matrix;
