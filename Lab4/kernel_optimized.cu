@@ -81,8 +81,8 @@ __global__ void matrixTranspose(float* out, float* in, int nx, int ny) {
 
 int main()
 {
-    int x = 2048;
-    int y = 2048;
+    int x = 1024;
+    int y = 1024;
 
 
     int matrixSize = x * y;

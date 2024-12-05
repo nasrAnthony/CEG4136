@@ -1,5 +1,4 @@
-﻿
-#include "cuda_runtime.h"
+﻿#include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include <iostream> 
 #include <stdlib.h>
@@ -8,8 +7,8 @@
 
 using namespace std;
 
-#define BDIMX 16 // 32
-#define BDIMY 16 // 16
+#define BDIMX 32 // 32
+#define BDIMY 32 // 16
 
 void buildMatrix(float* start, int& sizeX, int& sizeY) { //helper function to init the matrices before multiplication. 
     for (int i = 0; i < sizeY; i++) {
@@ -47,7 +46,7 @@ __global__ void matrixTranspose(float *out, float *in, int nx, int ny) {
     iy = blockIdx.y * blockDim.y + threadIdx.y;
 
 
-    // linear global memory index for original matrix
+    // 1D global memory index for original matrix
     ti = iy * nx + ix; 
     
     if (ix < nx && iy < ny) {
